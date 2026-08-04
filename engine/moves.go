@@ -41,6 +41,7 @@ func (b Board) applyDieWhite(from int, die int) (Board, bool) {
 	if b.Points[target] == -1 {
 		b.Points[target] = 0
 		b.BlackBar++
+
 	}
 	b.Points[from]--
 	b.Points[target]++

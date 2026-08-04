@@ -129,20 +129,20 @@ func (b Board) Mirror() Board {
 }
 
 func (b Board) Check() error {
-	whiteTotal := int8(0)
-	blackTotal := int8(0)
+	whiteTotal := b.WhiteOff + b.WhiteBar
+	blackTotal := b.BlackOff + b.BlackBar
 	for _, n := range b.Points {
 		if n > 0 {
 			whiteTotal += int8(n)
 		} else {
-			blackTotal += int8(n)
+			blackTotal += -n
 		}
 	}
 	if whiteTotal != 15 {
 		return fmt.Errorf("white total is %d, expected 15", whiteTotal)
 	}
-	if blackTotal != -15 {
-		return fmt.Errorf("black total is -%d, expected 15", blackTotal)
+	if blackTotal != 15 {
+		return fmt.Errorf("black total is %d, expected 15", blackTotal)
 	}
 	return nil
 }
