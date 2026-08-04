@@ -4,7 +4,7 @@ type Picker func([]Board) int
 
 type Agent func(dice *Dice) (white, black Picker)
 
-func RandomAgent(dice *Dice) Agent {
+func RandomAgent() Agent {
 	return func(dice *Dice) (white, black Picker) {
 		p := func(boards []Board) int { return dice.Pick(len(boards)) }
 		return p, p
@@ -12,13 +12,9 @@ func RandomAgent(dice *Dice) Agent {
 }
 
 func GreedyAgent(bt *Batcher) Agent {
-	return func(dice *Dice) (white, black Picker) {
-		white = func(boards []Board) int {
-			return GreedyPick(bt, boards, true)
-		}
-		black = func(boards []Board) int {
-			return GreedyPick(bt, boards, false)
-		}
+	return func(_ *Dice) (Picker, Picker) {
+		white := func(bs []Board) int { return GreedyPick(bt, bs, true) }
+		black := func(bs []Board) int { return GreedyPick(bt, bs, false) }
 		return white, black
 	}
 }
