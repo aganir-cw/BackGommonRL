@@ -19,11 +19,11 @@ type Batcher struct {
 	Timeout  time.Duration //start 2ms
 }
 
-func NewBatcher() *Batcher {
+func NewBatcher(maxBatch int, timeout time.Duration) *Batcher {
 	return &Batcher{
 		In:       make(chan EvalReq),
-		MaxBatch: 4096,
-		Timeout:  2 * time.Millisecond,
+		MaxBatch: maxBatch,
+		Timeout:  timeout,
 	}
 }
 
