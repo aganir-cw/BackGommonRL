@@ -29,6 +29,23 @@ type GameResult struct {
 	Hits     int  // opponent checkers sent to the bar over the game
 }
 
+// Hits reports how many opponent checkers the mover sent to the bar in the turn
+// that took the board from before to after. before.WhiteToMove identifies the
+// mover; doubles can hit more than once, so this is a delta.
+func Hits(before, after Board) int {
+	if before.WhiteToMove {
+		return int(after.BlackBar - before.BlackBar)
+	}
+	return int(after.WhiteBar - before.WhiteBar)
+}
+
+// IsForfeit reports whether after is before with only the turn flipped — i.e.
+// the mover had no legal play and had to pass.
+func IsForfeit(before, after Board) bool {
+	after.WhiteToMove = before.WhiteToMove
+	return after == before
+}
+
 func PlayGame(pickWhite, pickBlack func([]Board) int, dice *Dice, maxPlies int, checkInvariant bool) GameResult {
 	b := Start()
 	var res GameResult
@@ -43,18 +60,8 @@ func PlayGame(pickWhite, pickBlack func([]Board) int, dice *Dice, maxPlies int, 
 		prev := b
 		b = states[pick(states)]
 
-		// A hit shows up as the opponent's bar count rising during the mover's
-		// turn (doubles can hit more than once, so use the delta).
-		if prev.WhiteToMove {
-			res.Hits += int(b.BlackBar - prev.BlackBar)
-		} else {
-			res.Hits += int(b.WhiteBar - prev.WhiteBar)
-		}
-		// A forfeit is the sole afterstate being identical to the prior
-		// position except for the flipped turn: nothing moved.
-		if b.Points == prev.Points &&
-			b.WhiteBar == prev.WhiteBar && b.BlackBar == prev.BlackBar &&
-			b.WhiteOff == prev.WhiteOff && b.BlackOff == prev.BlackOff {
+		res.Hits += Hits(prev, b)
+		if IsForfeit(prev, b) {
 			res.Forfeits++
 		}
 

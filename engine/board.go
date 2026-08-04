@@ -52,7 +52,7 @@ func (b Board) String() string {
 }
 
 // Render draws the full 2D ASCII board with both bars, off counts, and side to
-// move. X = White (positive), O = Black (negative).
+// move. W = White (positive), B = Black (negative).
 func (b Board) Render() string {
 	abs := func(v int8) int {
 		if v < 0 {
@@ -62,9 +62,9 @@ func (b Board) Render() string {
 	}
 	sym := func(v int8) string {
 		if v > 0 {
-			return "X"
+			return "W"
 		}
-		return "O"
+		return "B"
 	}
 	// token renders a 3-char cell for point index idx at stack depth.
 	token := func(idx, depth int) string {
