@@ -23,6 +23,40 @@ type outcome struct {
 	invFailed bool
 }
 
+type Flags struct {
+	Games       int
+	Random      bool
+	Seed        int
+	Check       bool
+	AgentName   string
+	Concurrency int
+	MaxBatch    int
+	Timeout     int
+}
+
+type SelfPlayResult struct {
+	WhiteWins     int
+	InvFailures   int
+	CapHits       int
+	TotalPlies    int
+	TotalForfeits int
+	TotalHits     int
+	Lengths       []int
+}
+
+func newFlags(games int, random bool, seed int, check bool, agentName string, concurrency int, maxBatch int, timeout int) *Flags {
+	return &Flags{
+		Games:       games,
+		Random:      random,
+		Seed:        seed,
+		Check:       check,
+		AgentName:   agentName,
+		Concurrency: concurrency,
+		MaxBatch:    maxBatch,
+		Timeout:     timeout,
+	}
+}
+
 func main() {
 	games := flag.Int("games", 10000, "number of games to play")
 	random := flag.Bool("random", true, "use the random policy for both sides")
@@ -47,6 +81,7 @@ func main() {
 	if !*random {
 		fmt.Println("note: only the random policy is implemented; running random-vs-random")
 	}
+	flags := newFlags(*games, *random, *seed, *check, *agentName, *concurrency, *maxBatch, *timeout)
 
 	var agent engine.Agent
 
