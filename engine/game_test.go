@@ -315,3 +315,53 @@ func TestLegalAfterstatesMirrorSymmetryRandom(t *testing.T) {
 		}
 	}
 }
+
+func FuzzAfterstates(f *testing.F) {
+	for _, seed := range []uint64{0, 1, 42, 0x5eed, ^uint64(0)} {
+		f.Add(seed)
+	}
+
+	f.Fuzz(func(t *testing.T, seed uint64) {
+		dice := NewDice(seed)
+		b := Start()
+
+		// Deterministically replay a random sequence to obtain a valid position.
+		k := 1 + int(seed%1000)
+		for range k {
+			d1, d2 := dice.Roll()
+			afterstates := LegalAfterstates(b, d1, d2)
+			if len(afterstates) == 0 {
+				t.Fatalf("seed=%d: no afterstates during replay\nboard: %v", seed, b)
+			}
+
+			b = afterstates[dice.Pick(len(afterstates))]
+			if b.WhiteOff == 15 || b.BlackOff == 15 {
+				b = Start()
+			}
+		}
+
+		d1, d2 := dice.Roll()
+		afterstates := LegalAfterstates(b, d1, d2)
+
+		if len(afterstates) == 0 {
+			t.Fatalf("seed=%d dice=(%d,%d): no afterstates\nboard: %v",
+				seed, d1, d2, b)
+		}
+
+		for i, afterstate := range afterstates {
+			if err := afterstate.Check(); err != nil {
+				t.Fatalf(
+					"seed=%d dice=(%d,%d): afterstate %d violates invariants: %v\nbefore: %v\nafter:  %v",
+					seed, d1, d2, i, err, b, afterstate,
+				)
+			}
+
+			if afterstate.WhiteToMove == b.WhiteToMove {
+				t.Fatalf(
+					"seed=%d dice=(%d,%d): afterstate %d did not flip turn\nbefore: %v\nafter:  %v",
+					seed, d1, d2, i, b, afterstate,
+				)
+			}
+		}
+	})
+}
