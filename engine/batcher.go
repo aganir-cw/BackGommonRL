@@ -27,6 +27,10 @@ func NewBatcher() *Batcher {
 	}
 }
 
+// Main loop: read requests from input, batch, send to scorer
+// Conmtains slice of requests, which each contain encodings. We count total encodings as n
+// We have a flush that creates an encoding array of all encodings in the batch, sends it to scorer sorted
+// It scores all, returns in original order with offsets
 func (bt *Batcher) Run(s *Scorer) {
 	pending := []EvalReq{}
 	n := 0
