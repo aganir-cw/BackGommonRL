@@ -10,22 +10,56 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
+	"time"
 
 	"golearner/engine"
 )
 
 const maxPlies = 1500
 
+type outcome struct {
+	res       engine.GameResult
+	invFailed bool
+}
+
 func main() {
 	games := flag.Int("games", 10000, "number of games to play")
 	random := flag.Bool("random", true, "use the random policy for both sides")
 	seed := flag.Int("seed", 42, "base RNG seed (each game uses seed+index)")
 	check := flag.Bool("check", false, "verify the board invariant after every ply")
+	agentName := flag.String("agent", "random", "picking strategies available: random, greedy")
 	concurrency := flag.Int("concurrency", 1, "number of concurrent games")
+	maxBatch := flag.Int("max-batch", 4096, "max positions per batch (greedy only)")
+	timeout := flag.Int("timeout", 2, "timeout for each game in milliseconds")
+
 	flag.Parse()
+	if *concurrency < 1 {
+		fmt.Println("concurrency must be at least 1")
+		return
+	}
+
+	if *maxBatch < 1 {
+		fmt.Println("max-batch must be at least 1")
+		return
+	}
 
 	if !*random {
 		fmt.Println("note: only the random policy is implemented; running random-vs-random")
+	}
+
+	var agent engine.Agent
+
+	switch *agentName {
+	case "random":
+		agent = engine.RandomAgent()
+	case "greedy":
+		scorer := engine.NewScorer("http://localhost:8000")
+		bt := engine.NewBatcher(*maxBatch, time.Duration(*timeout)*time.Millisecond)
+		go bt.Run(scorer)
+		agent = engine.GreedyAgent(bt)
+	default:
+		fmt.Printf("invalid agent name %q", *agentName)
 	}
 
 	var (
@@ -38,55 +72,95 @@ func main() {
 		lengths       []int
 	)
 
-	for i := 0; i < *games; i++ {
-		dice := engine.NewDice(uint64(*seed) + uint64(i))
-		pick := func(states []engine.Board) int { return dice.Pick(len(states)) }
+	start := time.Now()
+	var lastPrint time.Time
 
-		res, invFailed := playSafely(pick, dice, *check)
-		if invFailed {
+	jobs := make(chan int)
+	results := make(chan outcome)
+
+	// N Workers: each pulls game indices until job closes
+	var wg sync.WaitGroup
+	for w := 0; w < *concurrency; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := range jobs {
+				res, invFailed := runGame(agent, *seed, i, *check)
+				results <- outcome{res, invFailed}
+			}
+		}()
+	}
+
+	// Producer: hands out game indices 0...games-1, then close so range ends
+	go func() {
+		for i := 0; i < *games; i++ {
+			jobs <- i
+		}
+		close(jobs)
+	}()
+
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	// Collecctor:
+	for o := range results {
+		if o.invFailed {
 			invFailures++
 			continue
 		}
-		if res.WhiteWon {
+		if o.res.WhiteWon {
 			whiteWins++
 		}
-		if res.Plies >= maxPlies {
+		if o.res.Plies >= maxPlies {
 			capHits++
 		}
-		totalPlies += res.Plies
-		totalForfeits += res.Forfeits
-		totalHits += res.Hits
-		lengths = append(lengths, res.Plies)
-	}
+		totalPlies += o.res.Plies
+		totalForfeits += o.res.Forfeits
+		totalHits += o.res.Hits
+		lengths = append(lengths, o.res.Plies)
 
-	completed := len(lengths)
-	fmt.Printf("games:            %d\n", *games)
-	fmt.Printf("invariant fails:  %d\n", invFailures)
-	if completed == 0 {
-		fmt.Println("no games completed")
-		return
-	}
+		done := len(lengths) + invFailures
+		if time.Since(lastPrint) > 100*time.Millisecond || done == *games {
+			lastPrint = time.Now()
+			rate := float64(done) / time.Since(start).Seconds()
+			fmt.Printf("\r\033[Kgames %d/%d (%.1f%%)  %.1f games/s",
+				done, *games, 100*float64(done)/float64(*games), rate)
+		}
 
+	}
 	sort.Ints(lengths)
-	fmt.Printf("white win rate:   %.3f\n", float64(whiteWins)/float64(completed))
+
+	fmt.Printf("\r\033[Kgames:            %d\n", *games)
+	fmt.Printf("Total time: %s\n", time.Since(start))
+	fmt.Printf("invariant fails:  %d\n", invFailures)
+	fmt.Printf("white win rate:   %.3f\n", float64(whiteWins)/float64(len(lengths)))
 	fmt.Printf("plies min/median/mean/max: %d / %d / %.1f / %d\n",
-		lengths[0], lengths[completed/2], float64(totalPlies)/float64(completed), lengths[completed-1])
+		lengths[0], lengths[len(lengths)/2], float64(totalPlies)/float64(len(lengths)), lengths[len(lengths)-1])
 	fmt.Printf("cap hits (>=%d): %d\n", maxPlies, capHits)
-	fmt.Printf("forfeits total/per-game:   %d / %.2f\n", totalForfeits, float64(totalForfeits)/float64(completed))
-	fmt.Printf("hits total/per-game:       %d / %.2f\n", totalHits, float64(totalHits)/float64(completed))
+	fmt.Printf("forfeits total/per-game:   %d / %.2f\n", totalForfeits, float64(totalForfeits)/float64(len(lengths)))
+	fmt.Printf("hits total/per-game:       %d / %.2f\n", totalHits, float64(totalHits)/float64(len(lengths)))
 	printHistogram(lengths, 50)
+}
+
+func runGame(agent engine.Agent, seed, i int, check bool) (engine.GameResult, bool) {
+	dice := engine.NewDice(uint64(seed) + uint64(i))
+	white, black := agent(dice)
+	res, invFailed := playSafely(white, black, dice, check)
+	return res, invFailed
 }
 
 // playSafely runs one game, converting an invariant panic (from PlayGame with
 // checkInvariant=true) into a flag so the soak can keep going and tally it.
-func playSafely(pick func([]engine.Board) int, dice *engine.Dice, check bool) (res engine.GameResult, invFailed bool) {
+func playSafely(white, black engine.Picker, dice *engine.Dice, check bool) (res engine.GameResult, invFailed bool) {
 	defer func() {
 		if r := recover(); r != nil {
 			invFailed = true
 			fmt.Printf("invariant failure: %v\n", r)
 		}
 	}()
-	res = engine.PlayGame(pick, pick, dice, maxPlies, check)
+	res = engine.PlayGame(white, black, dice, maxPlies, check)
 	return
 }
 
