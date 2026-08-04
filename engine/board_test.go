@@ -19,7 +19,7 @@ func TestStartPosition(t *testing.T) {
 		{"White 13-point", 13 - 1, 5},
 		{"White 8-point", 8 - 1, 3},
 		{"White 6-point", 6 - 1, 5},
-		{"Black 24-point", 24 - 24, -2},
+		{"Black 24-point", 0, -2},
 		{"Black 13-point", 24 - 13, -5},
 		{"Black 8-point", 24 - 8, -3},
 		{"Black 6-point", 24 - 6, -5},
