@@ -24,6 +24,10 @@ type Scorer struct {
 	buf []byte
 }
 
+func NewScorer(url string) *Scorer {
+	return &Scorer{url: url}
+}
+
 func (s *Scorer) Score(encs [][EncodingDim]float32) ([]float32, error) {
 	const dim = EncodingDim
 	count := len(encs)
