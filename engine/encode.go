@@ -13,31 +13,31 @@ const (
 	EncodingDim = 198
 )
 
-func boolToFloat(b bool) float64 {
+func boolToFloat(b bool) float32 {
 	if b {
 		return 1.0
 	}
 	return 0.0
 }
 
-func Encode(b Board) [EncodingDim]float64 {
-	var enc [EncodingDim]float64
+func Encode(b Board) [EncodingDim]float32 {
+	var enc [EncodingDim]float32
 	for i := 0; i < 24; i++ {
 		enc[4*i+0] = boolToFloat(b.Points[i] >= 1)
 		enc[4*i+1] = boolToFloat(b.Points[i] >= 2)
 		enc[4*i+2] = boolToFloat(b.Points[i] >= 3)
-		enc[4*i+3] = max(0, float64(b.Points[i]-3)/2)
+		enc[4*i+3] = max(0, float32(b.Points[i]-3)/2)
 
 		enc[4*i+96] = boolToFloat(b.Points[i] <= -1)
 		enc[4*i+97] = boolToFloat(b.Points[i] <= -2)
 		enc[4*i+98] = boolToFloat(b.Points[i] <= -3)
-		enc[4*i+99] = max(0, float64(-b.Points[i]-3)/2)
+		enc[4*i+99] = max(0, float32(-b.Points[i]-3)/2)
 	}
 
-	enc[192] = float64(b.WhiteBar) / 2.0
-	enc[193] = float64(b.BlackBar) / 2.0
-	enc[194] = float64(b.WhiteOff) / 15.0
-	enc[195] = float64(b.BlackOff) / 15.0
+	enc[192] = float32(b.WhiteBar) / 2.0
+	enc[193] = float32(b.BlackBar) / 2.0
+	enc[194] = float32(b.WhiteOff) / 15.0
+	enc[195] = float32(b.BlackOff) / 15.0
 	enc[196] = boolToFloat(b.WhiteToMove)
 	enc[197] = boolToFloat(!b.WhiteToMove)
 

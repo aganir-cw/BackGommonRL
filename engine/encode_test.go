@@ -7,10 +7,10 @@ import "testing"
 // 16(x3),18(x5); no bar/off; White to move. Each point contributes 4 features
 // {n>=1, n>=2, n>=3, max(0,n-3)/2} in its color block, so the vector is sparse.
 func TestEncodeStart(t *testing.T) {
-	var want [EncodingDim]float64
+	var want [EncodingDim]float32
 
 	// White block [0:96): 4 features per point at 4*i.
-	setPoint := func(base, i int, f0, f1, f2, f3 float64) {
+	setPoint := func(base, i int, f0, f1, f2, f3 float32) {
 		want[base+4*i+0] = f0
 		want[base+4*i+1] = f1
 		want[base+4*i+2] = f2
@@ -63,7 +63,7 @@ func TestEncodeMirrorSwapsColors(t *testing.T) {
 		got := Encode(b.Mirror())
 
 		// Build what the mirrored encoding must be, purely by rearranging e.
-		var want [EncodingDim]float64
+		var want [EncodingDim]float32
 		for pt := 0; pt < 24; pt++ {
 			for k := 0; k < 4; k++ {
 				// mirror's White block at pt == orig's Black block at 23-pt.
