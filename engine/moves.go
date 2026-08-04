@@ -77,6 +77,9 @@ func (b Board) whitAllHome() bool {
 }
 
 func (b Board) enterFromBar(die int) (Board, bool) {
+	if b.WhiteBar <= 0 {
+		return b, false
+	}
 	entry := 24 - die
 	if b.Points[entry] <= -2 {
 		return b, false

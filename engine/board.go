@@ -146,3 +146,76 @@ func (b Board) Check() error {
 	}
 	return nil
 }
+
+// Generate all legal board states after applying given 2 dice to the board
+// This is the recursive helper function for gen()
+// It takes the current board, the two dice, and a slice to store the legal states
+// It returns a slice of legal boards
+// Should also handle the case where the dice are the same, and the case where the dice are different
+// D1=D2=0 means no dice were rolled (end of the line)
+func LegalAfterstates(b Board, d1, d2 int) []Board {
+	dice := []int{d1, d2}
+	if d1 == d2 {
+		dice = []int{d1, d1, d1, d1}
+	}
+	out := map[Board]int{}
+	gen(b, dice, 0, out)
+	if d1 != d2 {
+		gen(b, []int{d2, d1}, 0, out)
+	}
+	states := make([]Board, 0, len(out))
+	maxDepth := 0
+
+	for _, d := range out {
+		if d > maxDepth {
+			maxDepth = d
+		}
+	}
+
+	if maxDepth == 1 && d1 != d2 {
+		big, small := d1, d2
+		if small > big {
+			big, small = small, big
+		}
+		out = map[Board]int{}
+		gen(b, []int{big}, 0, out)
+		if len(out) == 0 {
+			gen(b, []int{small}, 0, out)
+		}
+	}
+
+	for nb, d := range out {
+		if d != maxDepth {
+			continue
+		}
+		nb.WhiteToMove = !nb.WhiteToMove
+		nb.Check()
+		states = append(states, nb)
+	}
+	if len(out) == 0 {
+		return []Board{skip(b)}
+	}
+	return states
+}
+
+func gen(b Board, dice []int, depth int, out map[Board]int) {
+	if len(dice) == 0 {
+		return
+	}
+
+	for from := 0; from < 25; from++ {
+		nb, ok := applyDie(b, from, dice[0])
+		if !ok {
+			continue
+		}
+		if depth+1 > out[nb] {
+			out[nb] = depth + 1
+		}
+		gen(nb, dice[1:], depth+1, out)
+	}
+}
+
+func skip(b Board) Board {
+	b.WhiteToMove = !b.WhiteToMove
+	return b
+}

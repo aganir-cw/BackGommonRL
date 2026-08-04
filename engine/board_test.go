@@ -91,3 +91,22 @@ func TestCheckCatchesMissingCheckers(t *testing.T) {
 		t.Errorf("unexpected error: %v", err)
 	}
 }
+
+func TestGenTwoDice(t *testing.T) {
+	// One white checker on index 10; the other 14 already off. Only one thing can move.
+	b := mkBoard(map[int]int8{10: 1}, map[int]int8{0: 15}, 0, 0, 14, 0, true)
+	out := map[Board]int{}
+	gen(b, []int{3, 1}, 0, out)
+	// die3 then die1: 10 -> 7 (depth 1) -> 6 (depth 2)
+	after7, _ := applyDie(b, 10, 3)
+	after6, _ := applyDie(after7, 7, 1)
+	if out[after7] != 1 {
+		t.Fatalf("expected partial 10->7 at depth 1, got %d", out[after7])
+	}
+	if out[after6] != 2 {
+		t.Fatalf("expected full 10->7->6 at depth 2, got %d", out[after6])
+	}
+	if len(out) != 2 {
+		t.Fatalf("expected exactly 2 reached boards, got %d", len(out))
+	}
+}
