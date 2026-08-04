@@ -21,6 +21,7 @@ func main() {
 	random := flag.Bool("random", true, "use the random policy for both sides")
 	seed := flag.Int("seed", 42, "base RNG seed (each game uses seed+index)")
 	check := flag.Bool("check", false, "verify the board invariant after every ply")
+	concurrency := flag.Int("concurrency", 1, "number of concurrent games")
 	flag.Parse()
 
 	if !*random {
