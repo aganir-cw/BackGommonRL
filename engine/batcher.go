@@ -2,6 +2,7 @@ package engine
 
 import (
 	"fmt"
+	"sync/atomic"
 	"time"
 )
 
@@ -14,9 +15,12 @@ type EvalReq struct {
 }
 
 type Batcher struct {
-	In       chan EvalReq
-	MaxBatch int           // positions, start 4096
-	Timeout  time.Duration //start 2ms
+	In             chan EvalReq
+	MaxBatch       int           // positions, start 4096
+	Timeout        time.Duration //start 2ms
+	Done           chan struct{}
+	TotalPositions atomic.Int64
+	TotalFlushes   atomic.Int64
 }
 
 func NewBatcher(maxBatch int, timeout time.Duration) *Batcher {
@@ -24,6 +28,7 @@ func NewBatcher(maxBatch int, timeout time.Duration) *Batcher {
 		In:       make(chan EvalReq),
 		MaxBatch: maxBatch,
 		Timeout:  timeout,
+		Done:     make(chan struct{}),
 	}
 }
 
@@ -55,6 +60,9 @@ func (bt *Batcher) Run(s *Scorer) {
 			panic(fmt.Sprintf("scorer returned %d scores for %d encodings", len(scores), n))
 		}
 
+		bt.TotalPositions.Add(int64(n))
+		bt.TotalFlushes.Add(1)
+
 		offset := 0
 		for _, req := range pending {
 			end := offset + len(req.Encs)
@@ -80,7 +88,16 @@ func (bt *Batcher) Run(s *Scorer) {
 			}
 		case <-timer:
 			flush()
+		case <-bt.Done:
+			return
 		}
-
 	}
+}
+
+func (bt *Batcher) Stop() {
+	close(bt.Done)
+}
+
+func (bt *Batcher) Snapshot() (pos, flushes int64) {
+	return bt.TotalPositions.Load(), bt.TotalFlushes.Load()
 }

@@ -1,9 +1,12 @@
 package main
 
 import (
+	"encoding/csv"
 	"fmt"
 	"golearner/engine"
+	"os"
 	"sort"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -12,26 +15,90 @@ import (
 type CellResult struct {
 	Concurrency int
 	TimeoutMs   float64
+	WarmupS     float64
+	MeasureS    float64
 	Games       int64
 	GamesPerSec float64
 	PliesPerSec float64
+	MeanBatch   float64
+	CapHits     int64
 }
 
-func SweepGames(agent engine.Agent, flags []*Flags) ([]SelfPlayResult, error) {
-	results := make([]SelfPlayResult, len(flags))
-	for i, flag := range flags {
-		var err error
-		results[i], err = RunLoop(agent, flag)
-		if err != nil {
-			return nil, fmt.Errorf("error running game %d: %w", i, err)
+func csvHeader() []string {
+	return []string{
+		"concurrency", "timeout_ms", "warmup_s", "measure_s",
+		"games", "games_per_s", "plies_per_s", "mean_batch", "cap_hits",
+	}
+}
+
+func (c CellResult) CSVRow() []string {
+	return []string{
+		strconv.Itoa(c.Concurrency),
+		strconv.FormatFloat(c.TimeoutMs, 'f', 3, 64),
+		strconv.FormatFloat(c.WarmupS, 'f', 1, 64),
+		strconv.FormatFloat(c.MeasureS, 'f', 1, 64),
+		strconv.FormatInt(c.Games, 10),
+		strconv.FormatFloat(c.GamesPerSec, 'f', 2, 64),
+		strconv.FormatFloat(c.PliesPerSec, 'f', 2, 64),
+		strconv.FormatFloat(c.MeanBatch, 'f', 2, 64),
+		strconv.FormatInt(c.CapHits, 10),
+	}
+}
+
+// RunSweep runs the Block 4 throughput grid: a fresh batcher per cell (sharing
+// one Scorer), 10s warmup + 60s measure by default, writing one flushed CSV row
+// per cell so a crash mid-sweep keeps partial data.
+func RunSweep(server string, maxBatch, baseSeed int, warmup, measure time.Duration, out string) error {
+	concurrencies := []int{32, 128, 512, 2048, 8192}
+	timeouts := []time.Duration{500 * time.Microsecond, 2 * time.Millisecond, 10 * time.Millisecond}
+
+	scorer := engine.NewScorer(server)
+
+	f, err := os.Create(out)
+	if err != nil {
+		return fmt.Errorf("create %s: %w", out, err)
+	}
+	defer f.Close()
+
+	w := csv.NewWriter(f)
+	if err := w.Write(csvHeader()); err != nil {
+		return fmt.Errorf("write header: %w", err)
+	}
+	w.Flush()
+
+	for _, timeout := range timeouts {
+		for _, concurrency := range concurrencies {
+			makeBundle := func() engine.AgentBundle {
+				bt := engine.NewBatcher(maxBatch, timeout)
+				go bt.Run(scorer)
+				return engine.AgentBundle{
+					Agent:   engine.NewGreedyAgent(bt),
+					Batcher: bt,
+					Stop:    bt.Stop,
+				}
+			}
+
+			res := RunCell(makeBundle, concurrency, timeout, warmup, measure, baseSeed)
+			if err := w.Write(res.CSVRow()); err != nil {
+				return fmt.Errorf("write row: %w", err)
+			}
+			w.Flush()
+			if err := w.Error(); err != nil {
+				return fmt.Errorf("flush row: %w", err)
+			}
+
+			fmt.Printf("cell c=%-5d timeout=%6.3fms  %8.1f games/s  %9.1f plies/s  mean batch %7.1f  cap hits %d\n",
+				res.Concurrency, res.TimeoutMs, res.GamesPerSec, res.PliesPerSec, res.MeanBatch, res.CapHits)
 		}
 	}
-	return results, nil
+	return nil
 }
 
-func RunCell(newAgent func() engine.Agent, concurrency int, timeout time.Duration, warmup, measure time.Duration) CellResult {
-	agent := newAgent()
-	var games, plies atomic.Int64
+func RunCell(makeBundle func() engine.AgentBundle, concurrency int, timeout time.Duration, warmup, measure time.Duration, baseSeed int) CellResult {
+	b := makeBundle()
+	defer b.Stop()
+
+	var games, plies, capHits atomic.Int64
 	var gameIdx atomic.Int64 // distinct seeds
 	stop := make(chan struct{})
 
@@ -46,9 +113,12 @@ func RunCell(newAgent func() engine.Agent, concurrency int, timeout time.Duratio
 					return
 				default:
 					i := int(gameIdx.Add(1))
-					res, _ := runGame(agent, i)
+					res, _ := runGame(b.Agent, baseSeed, i, false)
 					games.Add(1)
 					plies.Add(int64(res.Plies))
+					if res.Plies >= maxPlies {
+						capHits.Add(1)
+					}
 				}
 			}
 		}()
@@ -56,21 +126,38 @@ func RunCell(newAgent func() engine.Agent, concurrency int, timeout time.Duratio
 
 	time.Sleep(warmup)
 	g0, p0 := games.Load(), plies.Load()
+	var pos0, flush0 int64
+	if b.Batcher != nil {
+		pos0, flush0 = b.Batcher.Snapshot()
+	}
 	t0 := time.Now()
 
 	time.Sleep(measure)
 	g1, p1 := games.Load(), plies.Load()
+	var pos1, flush1 int64
+	if b.Batcher != nil {
+		pos1, flush1 = b.Batcher.Snapshot()
+	}
 	elapsed := time.Since(t0).Seconds()
 
 	close(stop)
 	wg.Wait()
 
+	meanBatch := 0.0
+	if df := flush1 - flush0; df > 0 {
+		meanBatch = float64(pos1-pos0) / float64(df)
+	}
+
 	return CellResult{
 		Concurrency: concurrency,
 		TimeoutMs:   float64(timeout) / float64(time.Millisecond),
+		WarmupS:     warmup.Seconds(),
+		MeasureS:    measure.Seconds(),
 		Games:       g1 - g0,
 		GamesPerSec: float64(g1-g0) / elapsed,
 		PliesPerSec: float64(p1-p0) / elapsed,
+		MeanBatch:   meanBatch,
+		CapHits:     capHits.Load(),
 	}
 }
 

@@ -1,17 +1,22 @@
 package engine
 
+import (
+	"fmt"
+	"time"
+)
+
 type Picker func([]Board) int
 
 type Agent func(dice *Dice) (white, black Picker)
 
-func RandomAgent() Agent {
+func NewRandomAgent() Agent {
 	return func(dice *Dice) (white, black Picker) {
 		p := func(boards []Board) int { return dice.Pick(len(boards)) }
 		return p, p
 	}
 }
 
-func GreedyAgent(bt *Batcher) Agent {
+func NewGreedyAgent(bt *Batcher) Agent {
 	return func(_ *Dice) (Picker, Picker) {
 		white := func(bs []Board) int { return GreedyPick(bt, bs, true) }
 		black := func(bs []Board) int { return GreedyPick(bt, bs, false) }
@@ -37,4 +42,33 @@ func GreedyPick(bt *Batcher, boards []Board, whiteToMove bool) int {
 	} else {
 		return ArgMin(scores)
 	}
+}
+
+type AgentBundle struct {
+	Agent   Agent
+	Batcher *Batcher // nil for random
+	Stop    func()   // stops batcher goroutine
+}
+
+func BuildAgent(name, server string, maxBatch int, timeout time.Duration) AgentBundle {
+	if name == "random" {
+		return AgentBundle{
+			Agent: NewRandomAgent(),
+			Stop:  func() {},
+		}
+	}
+	if name == "greedy" {
+		scorer := NewScorer(server)
+		bt := NewBatcher(maxBatch, timeout)
+		go bt.Run(scorer)
+		agent := NewGreedyAgent(bt)
+		return AgentBundle{
+			Agent:   agent,
+			Batcher: bt,
+			Stop: func() {
+				bt.Stop()
+			},
+		}
+	}
+	panic(fmt.Sprintf("invalid agent name %q", name))
 }

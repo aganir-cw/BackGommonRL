@@ -23,13 +23,12 @@ type outcome struct {
 
 type Flags struct {
 	Games       int
-	Random      bool
 	Seed        int
 	Check       bool
 	AgentName   string
 	Concurrency int
 	MaxBatch    int
-	Timeout     int
+	Timeout     time.Duration
 }
 
 type SelfPlayResult struct {
@@ -44,28 +43,31 @@ type SelfPlayResult struct {
 	Lengths       []int
 }
 
-func newFlags(games int, random bool, seed int, check bool, agentName string, concurrency int, maxBatch int, timeout int) *Flags {
+func newFlags(games int, seed int, check bool, agentName string, concurrency int, maxBatch int, timeout float64) *Flags {
 	return &Flags{
 		Games:       games,
-		Random:      random,
 		Seed:        seed,
 		Check:       check,
 		AgentName:   agentName,
 		Concurrency: concurrency,
 		MaxBatch:    maxBatch,
-		Timeout:     timeout,
+		Timeout:     time.Duration(timeout * float64(time.Millisecond)),
 	}
 }
 
 func main() {
 	games := flag.Int("games", 10000, "number of games to play")
-	random := flag.Bool("random", true, "use the random policy for both sides")
 	seed := flag.Int("seed", 42, "base RNG seed (each game uses seed+index)")
 	check := flag.Bool("check", false, "verify the board invariant after every ply")
 	agentName := flag.String("agent", "random", "picking strategies available: random, greedy")
 	concurrency := flag.Int("concurrency", 1, "number of concurrent games")
 	maxBatch := flag.Int("max-batch", 4096, "max positions per batch (greedy only)")
-	timeout := flag.Int("timeout", 2, "timeout for each game in milliseconds")
+	timeoutMs := flag.Float64("timeout-ms", 2.0, "batch flush timeout in milliseconds")
+	mode := flag.String("mode", "soak", "soak or sweep")
+	server := flag.String("server", "http://localhost:8000", "server URL for greedy mode")
+	out := flag.String("out", "sweep.csv", "output CSV path for sweep mode")
+	warmup := flag.Duration("warmup", 10*time.Second, "warmup window per sweep cell")
+	measure := flag.Duration("measure", 60*time.Second, "measure window per sweep cell")
 
 	flag.Parse()
 	if *concurrency < 1 {
@@ -78,32 +80,32 @@ func main() {
 		return
 	}
 
-	if !*random {
-		fmt.Println("note: only the random policy is implemented; running random-vs-random")
-	}
-	flags := newFlags(*games, *random, *seed, *check, *agentName, *concurrency, *maxBatch, *timeout)
+	timeout := time.Duration(*timeoutMs * float64(time.Millisecond))
 
-	var agent engine.Agent
-
-	switch *agentName {
-	case "random":
-		agent = engine.RandomAgent()
-	case "greedy":
-		scorer := engine.NewScorer("http://localhost:8000")
-		bt := engine.NewBatcher(*maxBatch, time.Duration(*timeout)*time.Millisecond)
-		go bt.Run(scorer)
-		agent = engine.GreedyAgent(bt)
+	switch *mode {
+	case "soak":
+		flags := newFlags(*games, *seed, *check, *agentName, *concurrency, *maxBatch, *timeoutMs)
+		b := engine.BuildAgent(*agentName, *server, *maxBatch, timeout)
+		defer b.Stop()
+		runSoak(b.Agent, flags)
+	case "sweep":
+		fmt.Println("sweep mode: ignoring -agent (forcing greedy)")
+		if err := RunSweep(*server, *maxBatch, *seed, *warmup, *measure, *out); err != nil {
+			fmt.Printf("error: %v\n", err)
+		}
 	default:
-		fmt.Printf("invalid agent name %q", *agentName)
+		fmt.Printf("invalid mode %q\n", *mode)
 	}
+}
 
+func runSoak(agent engine.Agent, flags *Flags) {
 	result, err := RunLoop(agent, flags)
 	if err != nil {
 		fmt.Printf("error: %v\n", err)
 		return
 	}
 
-	fmt.Printf("\r\033[Kgames:            %d\n", *games)
+	fmt.Printf("\r\033[Kgames:            %d\n", flags.Games)
 	fmt.Printf("Total time: %s\n", time.Since(result.StartTime))
 	fmt.Printf("invariant fails:  %d\n", result.InvFailures)
 	fmt.Printf("white win rate:   %.3f\n", float64(result.WhiteWins)/float64(len(result.Lengths)))
