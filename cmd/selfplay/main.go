@@ -8,9 +8,7 @@ package main
 import (
 	"flag"
 	"fmt"
-	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	"golearner/engine"
@@ -35,6 +33,8 @@ type Flags struct {
 }
 
 type SelfPlayResult struct {
+	StartTime     time.Time
+	EndTime       time.Time
 	WhiteWins     int
 	InvFailures   int
 	CapHits       int
@@ -97,86 +97,22 @@ func main() {
 		fmt.Printf("invalid agent name %q", *agentName)
 	}
 
-	var (
-		whiteWins     int
-		invFailures   int
-		capHits       int
-		totalPlies    int
-		totalForfeits int
-		totalHits     int
-		lengths       []int
-	)
-
-	start := time.Now()
-	var lastPrint time.Time
-
-	jobs := make(chan int)
-	results := make(chan outcome)
-
-	// N Workers: each pulls game indices until job closes
-	var wg sync.WaitGroup
-	for w := 0; w < *concurrency; w++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for i := range jobs {
-				res, invFailed := runGame(agent, *seed, i, *check)
-				results <- outcome{res, invFailed}
-			}
-		}()
+	result, err := RunLoop(agent, flags)
+	if err != nil {
+		fmt.Printf("error: %v\n", err)
+		return
 	}
-
-	// Producer: hands out game indices 0...games-1, then close so range ends
-	go func() {
-		for i := 0; i < *games; i++ {
-			jobs <- i
-		}
-		close(jobs)
-	}()
-
-	go func() {
-		wg.Wait()
-		close(results)
-	}()
-
-	// Collecctor:
-	for o := range results {
-		if o.invFailed {
-			invFailures++
-			continue
-		}
-		if o.res.WhiteWon {
-			whiteWins++
-		}
-		if o.res.Plies >= maxPlies {
-			capHits++
-		}
-		totalPlies += o.res.Plies
-		totalForfeits += o.res.Forfeits
-		totalHits += o.res.Hits
-		lengths = append(lengths, o.res.Plies)
-
-		done := len(lengths) + invFailures
-		if time.Since(lastPrint) > 100*time.Millisecond || done == *games {
-			lastPrint = time.Now()
-			rate := float64(done) / time.Since(start).Seconds()
-			fmt.Printf("\r\033[Kgames %d/%d (%.1f%%)  %.1f games/s",
-				done, *games, 100*float64(done)/float64(*games), rate)
-		}
-
-	}
-	sort.Ints(lengths)
 
 	fmt.Printf("\r\033[Kgames:            %d\n", *games)
-	fmt.Printf("Total time: %s\n", time.Since(start))
-	fmt.Printf("invariant fails:  %d\n", invFailures)
-	fmt.Printf("white win rate:   %.3f\n", float64(whiteWins)/float64(len(lengths)))
+	fmt.Printf("Total time: %s\n", time.Since(result.StartTime))
+	fmt.Printf("invariant fails:  %d\n", result.InvFailures)
+	fmt.Printf("white win rate:   %.3f\n", float64(result.WhiteWins)/float64(len(result.Lengths)))
 	fmt.Printf("plies min/median/mean/max: %d / %d / %.1f / %d\n",
-		lengths[0], lengths[len(lengths)/2], float64(totalPlies)/float64(len(lengths)), lengths[len(lengths)-1])
-	fmt.Printf("cap hits (>=%d): %d\n", maxPlies, capHits)
-	fmt.Printf("forfeits total/per-game:   %d / %.2f\n", totalForfeits, float64(totalForfeits)/float64(len(lengths)))
-	fmt.Printf("hits total/per-game:       %d / %.2f\n", totalHits, float64(totalHits)/float64(len(lengths)))
-	printHistogram(lengths, 50)
+		result.Lengths[0], result.Lengths[len(result.Lengths)/2], float64(result.TotalPlies)/float64(len(result.Lengths)), result.Lengths[len(result.Lengths)-1])
+	fmt.Printf("cap hits (>=%d): %d\n", maxPlies, result.CapHits)
+	fmt.Printf("forfeits total/per-game:   %d / %.2f\n", result.TotalForfeits, float64(result.TotalForfeits)/float64(len(result.Lengths)))
+	fmt.Printf("hits total/per-game:       %d / %.2f\n", result.TotalHits, float64(result.TotalHits)/float64(len(result.Lengths)))
+	printHistogram(result.Lengths, 50)
 }
 
 func runGame(agent engine.Agent, seed, i int, check bool) (engine.GameResult, bool) {
