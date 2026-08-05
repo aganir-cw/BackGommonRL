@@ -144,7 +144,7 @@ func RunCell(makeBundle func() engine.AgentBundle, concurrency int, timeout time
 					return
 				default:
 					i := int(gameIdx.Add(1))
-					r, _ := runGame(agent, baseSeed, i, false)
+					r, _ := runGame(agent, baseSeed, i, false, nil)
 					cGames.Add(1)
 					cPlies.Add(int64(r.Plies))
 					if r.Plies >= maxPlies {
@@ -192,7 +192,7 @@ func RunCell(makeBundle func() engine.AgentBundle, concurrency int, timeout time
 	return res, cGames.Load(), cPlies.Load()
 }
 
-func RunLoop(agent engine.Agent, flags *Flags) (SelfPlayResult, error) {
+func RunLoop(agent engine.Agent, flags *Flags, rec *engine.Recorder) (SelfPlayResult, error) {
 	start := time.Now()
 	var lastPrint time.Time
 
@@ -205,7 +205,7 @@ func RunLoop(agent engine.Agent, flags *Flags) (SelfPlayResult, error) {
 		go func() {
 			defer wg.Done()
 			for i := range jobs {
-				res, invFailed := runGame(agent, flags.Seed, i, flags.Check)
+				res, invFailed := runGame(agent, flags.Seed, i, flags.Check, rec)
 				results <- outcome{res, invFailed}
 			}
 		}()

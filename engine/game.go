@@ -46,7 +46,7 @@ func IsForfeit(before, after Board) bool {
 	return after == before
 }
 
-func PlayGame(pickWhite, pickBlack func([]Board) int, dice *Dice, maxPlies int, checkInvariant bool) GameResult {
+func PlayGame(pickWhite, pickBlack func([]Board) int, dice *Dice, maxPlies int, checkInvariant bool, onAfterstate func(Board)) GameResult {
 	b := Start()
 	var res GameResult
 	for plies := 1; plies <= maxPlies; plies++ {
@@ -59,6 +59,10 @@ func PlayGame(pickWhite, pickBlack func([]Board) int, dice *Dice, maxPlies int, 
 		}
 		prev := b
 		b = states[pick(states)]
+
+		if onAfterstate != nil {
+			onAfterstate(b)
+		}
 
 		res.Hits += Hits(prev, b)
 		if IsForfeit(prev, b) {

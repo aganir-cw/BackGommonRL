@@ -52,6 +52,7 @@ func main() {
 	out := flag.String("out", "sweep.csv", "output CSV path for sweep mode")
 	warmup := flag.Duration("warmup", 10*time.Second, "warmup window per sweep cell")
 	measure := flag.Duration("measure", 60*time.Second, "measure window per sweep cell")
+	record := flag.String("record", "", "dir to write trajectory shards to. empty == off")
 
 	flag.Parse()
 	if *concurrency < 1 {
@@ -76,7 +77,17 @@ func main() {
 		}
 		b := engine.BuildAgent(*agentName, *server, *maxBatch, timeout)
 		defer b.Stop()
-		runSoak(b.Agent, flags)
+		var rec *engine.Recorder
+		if *record != "" {
+			r, err := engine.NewRecorder(*record)
+			if err != nil {
+				fmt.Printf("error opening recorder: %v\n", err)
+				return
+			}
+			defer r.Close()
+			rec = r
+		}
+		runSoak(b.Agent, flags, rec)
 	case "sweep":
 		fmt.Println("sweep mode: ignoring -agent (forcing greedy)")
 		if err := RunSweep(*server, *maxBatch, *seed, *warmup, *measure, *out); err != nil {
@@ -87,8 +98,8 @@ func main() {
 	}
 }
 
-func runSoak(agent engine.Agent, flags *Flags) {
-	result, err := RunLoop(agent, flags)
+func runSoak(agent engine.Agent, flags *Flags, rec *engine.Recorder) {
+	result, err := RunLoop(agent, flags, rec)
 	if err != nil {
 		fmt.Printf("error: %v\n", err)
 		return
@@ -106,23 +117,37 @@ func runSoak(agent engine.Agent, flags *Flags) {
 	printHistogram(result.Lengths, 50)
 }
 
-func runGame(agent engine.Agent, seed, i int, check bool) (engine.GameResult, bool) {
+func runGame(agent engine.Agent, seed, i int, check bool, rec *engine.Recorder) (engine.GameResult, bool) {
 	dice := engine.NewDice(uint64(seed) + uint64(i))
 	white, black := agent(dice)
-	res, invFailed := playSafely(white, black, dice, check)
+	res, invFailed := playSafely(white, black, dice, check, rec)
 	return res, invFailed
 }
 
 // playSafely runs one game, converting an invariant panic (from PlayGame with
-// checkInvariant=true) into a flag so the soak can keep going and tally it.
-func playSafely(white, black engine.Picker, dice *engine.Dice, check bool) (res engine.GameResult, invFailed bool) {
+// checkInvariant=true) into a flag so the soak can keep going and tally it. When
+// rec is non-nil the game's afterstates are captured and, for a cleanly finished
+// game (no invariant failure, not capped), written as one trajectory record.
+func playSafely(white, black engine.Picker, dice *engine.Dice, check bool, rec *engine.Recorder) (res engine.GameResult, invFailed bool) {
+	var traj []engine.Board
+	var onAfterstate func(engine.Board)
+	if rec != nil {
+		onAfterstate = func(b engine.Board) { traj = append(traj, b) }
+	}
 	defer func() {
 		if r := recover(); r != nil {
 			invFailed = true
 			fmt.Printf("invariant failure: %v\n", r)
 		}
 	}()
-	res = engine.PlayGame(white, black, dice, maxPlies, check)
+	res = engine.PlayGame(white, black, dice, maxPlies, check, onAfterstate)
+	// Only record finished games: a capped or invariant-failed game has a
+	// meaningless outcome label.
+	if rec != nil && !invFailed && res.Plies < maxPlies {
+		if err := rec.Write(traj, res.WhiteWon); err != nil {
+			fmt.Printf("record write error: %v\n", err)
+		}
+	}
 	return
 }
 
