@@ -50,6 +50,14 @@ type AgentBundle struct {
 	Stop    func()   // stops batcher goroutine
 }
 
+// NewGreedyBundle spins up a batcher goroutine feeding a greedy agent, returning
+// the bundle whose Stop shuts the batcher down.
+func NewGreedyBundle(scorer *Scorer, maxBatch int, timeout time.Duration) AgentBundle {
+	bt := NewBatcher(maxBatch, timeout)
+	go bt.Run(scorer)
+	return AgentBundle{Agent: NewGreedyAgent(bt), Batcher: bt, Stop: bt.Stop}
+}
+
 func BuildAgent(name, server string, maxBatch int, timeout time.Duration) AgentBundle {
 	if name == "random" {
 		return AgentBundle{
@@ -58,17 +66,7 @@ func BuildAgent(name, server string, maxBatch int, timeout time.Duration) AgentB
 		}
 	}
 	if name == "greedy" {
-		scorer := NewScorer(server)
-		bt := NewBatcher(maxBatch, timeout)
-		go bt.Run(scorer)
-		agent := NewGreedyAgent(bt)
-		return AgentBundle{
-			Agent:   agent,
-			Batcher: bt,
-			Stop: func() {
-				bt.Stop()
-			},
-		}
+		return NewGreedyBundle(NewScorer(server), maxBatch, timeout)
 	}
 	panic(fmt.Sprintf("invalid agent name %q", name))
 }

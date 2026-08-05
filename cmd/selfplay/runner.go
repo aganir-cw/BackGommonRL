@@ -17,9 +17,10 @@ type CellResult struct {
 	TimeoutMs   float64
 	WarmupS     float64
 	MeasureS    float64
-	Games       int64
-	GamesPerSec float64
-	PliesPerSec float64
+	Plies       int64   // plies processed during the measure window (live count)
+	PliesPerSec float64 // true work rate; counts in-progress games, not just completions
+	GamesPerSec float64 // derived: PliesPerSec / MeanGameLen
+	MeanGameLen float64 // sweep-wide mean completed-game length used for the games/s conversion
 	MeanBatch   float64
 	CapHits     int64
 }
@@ -27,7 +28,7 @@ type CellResult struct {
 func csvHeader() []string {
 	return []string{
 		"concurrency", "timeout_ms", "warmup_s", "measure_s",
-		"games", "games_per_s", "plies_per_s", "mean_batch", "cap_hits",
+		"plies", "plies_per_s", "games_per_s", "mean_game_len", "mean_batch", "cap_hits",
 	}
 }
 
@@ -37,11 +38,28 @@ func (c CellResult) CSVRow() []string {
 		strconv.FormatFloat(c.TimeoutMs, 'f', 3, 64),
 		strconv.FormatFloat(c.WarmupS, 'f', 1, 64),
 		strconv.FormatFloat(c.MeasureS, 'f', 1, 64),
-		strconv.FormatInt(c.Games, 10),
-		strconv.FormatFloat(c.GamesPerSec, 'f', 2, 64),
+		strconv.FormatInt(c.Plies, 10),
 		strconv.FormatFloat(c.PliesPerSec, 'f', 2, 64),
+		strconv.FormatFloat(c.GamesPerSec, 'f', 2, 64),
+		strconv.FormatFloat(c.MeanGameLen, 'f', 2, 64),
 		strconv.FormatFloat(c.MeanBatch, 'f', 2, 64),
 		strconv.FormatInt(c.CapHits, 10),
+	}
+}
+
+// countingAgent wraps an agent so each ply (one pick call in PlayGame) bumps a
+// shared counter, giving a live plies/s that reflects work done by in-progress
+// games — not just games that happen to finish inside a short measure window.
+func countingAgent(a engine.Agent, plies *atomic.Int64) engine.Agent {
+	return func(d *engine.Dice) (engine.Picker, engine.Picker) {
+		white, black := a(d)
+		return func(bs []engine.Board) int {
+				plies.Add(1)
+				return white(bs)
+			}, func(bs []engine.Board) int {
+				plies.Add(1)
+				return black(bs)
+			}
 	}
 }
 
@@ -66,19 +84,25 @@ func RunSweep(server string, maxBatch, baseSeed int, warmup, measure time.Durati
 	}
 	w.Flush()
 
+	// Game length is concurrency-independent, so we pool completed games across
+	// all cells into one running mean and use it to convert the (accurate)
+	// plies/s into games/s — even for cells where nothing finishes in-window.
+	var totalGames, totalPlies int64
+
 	for _, timeout := range timeouts {
 		for _, concurrency := range concurrencies {
 			makeBundle := func() engine.AgentBundle {
-				bt := engine.NewBatcher(maxBatch, timeout)
-				go bt.Run(scorer)
-				return engine.AgentBundle{
-					Agent:   engine.NewGreedyAgent(bt),
-					Batcher: bt,
-					Stop:    bt.Stop,
-				}
+				return engine.NewGreedyBundle(scorer, maxBatch, timeout)
 			}
 
-			res := RunCell(makeBundle, concurrency, timeout, warmup, measure, baseSeed)
+			res, cGames, cPlies := RunCell(makeBundle, concurrency, timeout, warmup, measure, baseSeed)
+			totalGames += cGames
+			totalPlies += cPlies
+			if totalGames > 0 {
+				res.MeanGameLen = float64(totalPlies) / float64(totalGames)
+				res.GamesPerSec = res.PliesPerSec / res.MeanGameLen
+			}
+
 			if err := w.Write(res.CSVRow()); err != nil {
 				return fmt.Errorf("write row: %w", err)
 			}
@@ -87,20 +111,27 @@ func RunSweep(server string, maxBatch, baseSeed int, warmup, measure time.Durati
 				return fmt.Errorf("flush row: %w", err)
 			}
 
-			fmt.Printf("cell c=%-5d timeout=%6.3fms  %8.1f games/s  %9.1f plies/s  mean batch %7.1f  cap hits %d\n",
-				res.Concurrency, res.TimeoutMs, res.GamesPerSec, res.PliesPerSec, res.MeanBatch, res.CapHits)
+			fmt.Printf("cell c=%-5d timeout=%6.3fms  %8.1f games/s  %9.1f plies/s  mean len %6.1f  mean batch %7.1f  cap hits %d\n",
+				res.Concurrency, res.TimeoutMs, res.GamesPerSec, res.PliesPerSec, res.MeanGameLen, res.MeanBatch, res.CapHits)
 		}
 	}
 	return nil
 }
 
-func RunCell(makeBundle func() engine.AgentBundle, concurrency int, timeout time.Duration, warmup, measure time.Duration, baseSeed int) CellResult {
+// RunCell measures one grid cell. It returns the cell result plus the total
+// completed games and their plies over the whole run (warmup + measure) so the
+// caller can maintain a sweep-wide mean game length.
+func RunCell(makeBundle func() engine.AgentBundle, concurrency int, timeout time.Duration, warmup, measure time.Duration, baseSeed int) (res CellResult, completedGames, completedPlies int64) {
 	b := makeBundle()
 	defer b.Stop()
 
-	var games, plies, capHits atomic.Int64
+	var plies, cGames, cPlies, capHits atomic.Int64
 	var gameIdx atomic.Int64 // distinct seeds
 	stop := make(chan struct{})
+
+	// Every ply increments plies live, so the measure-window delta is the true
+	// work rate regardless of whether whole games finish inside the window.
+	agent := countingAgent(b.Agent, &plies)
 
 	var wg sync.WaitGroup
 	for w := 0; w < concurrency; w++ {
@@ -113,10 +144,10 @@ func RunCell(makeBundle func() engine.AgentBundle, concurrency int, timeout time
 					return
 				default:
 					i := int(gameIdx.Add(1))
-					res, _ := runGame(b.Agent, baseSeed, i, false)
-					games.Add(1)
-					plies.Add(int64(res.Plies))
-					if res.Plies >= maxPlies {
+					r, _ := runGame(agent, baseSeed, i, false)
+					cGames.Add(1)
+					cPlies.Add(int64(r.Plies))
+					if r.Plies >= maxPlies {
 						capHits.Add(1)
 					}
 				}
@@ -125,7 +156,7 @@ func RunCell(makeBundle func() engine.AgentBundle, concurrency int, timeout time
 	}
 
 	time.Sleep(warmup)
-	g0, p0 := games.Load(), plies.Load()
+	p0 := plies.Load()
 	var pos0, flush0 int64
 	if b.Batcher != nil {
 		pos0, flush0 = b.Batcher.Snapshot()
@@ -133,7 +164,7 @@ func RunCell(makeBundle func() engine.AgentBundle, concurrency int, timeout time
 	t0 := time.Now()
 
 	time.Sleep(measure)
-	g1, p1 := games.Load(), plies.Load()
+	p1 := plies.Load()
 	var pos1, flush1 int64
 	if b.Batcher != nil {
 		pos1, flush1 = b.Batcher.Snapshot()
@@ -148,17 +179,17 @@ func RunCell(makeBundle func() engine.AgentBundle, concurrency int, timeout time
 		meanBatch = float64(pos1-pos0) / float64(df)
 	}
 
-	return CellResult{
+	res = CellResult{
 		Concurrency: concurrency,
 		TimeoutMs:   float64(timeout) / float64(time.Millisecond),
 		WarmupS:     warmup.Seconds(),
 		MeasureS:    measure.Seconds(),
-		Games:       g1 - g0,
-		GamesPerSec: float64(g1-g0) / elapsed,
+		Plies:       p1 - p0,
 		PliesPerSec: float64(p1-p0) / elapsed,
 		MeanBatch:   meanBatch,
 		CapHits:     capHits.Load(),
 	}
+	return res, cGames.Load(), cPlies.Load()
 }
 
 func RunLoop(agent engine.Agent, flags *Flags) (SelfPlayResult, error) {
@@ -194,7 +225,6 @@ func RunLoop(agent engine.Agent, flags *Flags) (SelfPlayResult, error) {
 	}()
 	result := &SelfPlayResult{
 		StartTime:     start,
-		EndTime:       time.Time{},
 		WhiteWins:     0,
 		InvFailures:   0,
 		CapHits:       0,
@@ -230,8 +260,6 @@ func RunLoop(agent engine.Agent, flags *Flags) (SelfPlayResult, error) {
 	}
 
 	sort.Ints(result.Lengths)
-
-	result.EndTime = time.Now()
 
 	return *result, nil
 }

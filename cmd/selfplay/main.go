@@ -25,15 +25,11 @@ type Flags struct {
 	Games       int
 	Seed        int
 	Check       bool
-	AgentName   string
 	Concurrency int
-	MaxBatch    int
-	Timeout     time.Duration
 }
 
 type SelfPlayResult struct {
 	StartTime     time.Time
-	EndTime       time.Time
 	WhiteWins     int
 	InvFailures   int
 	CapHits       int
@@ -41,18 +37,6 @@ type SelfPlayResult struct {
 	TotalForfeits int
 	TotalHits     int
 	Lengths       []int
-}
-
-func newFlags(games int, seed int, check bool, agentName string, concurrency int, maxBatch int, timeout float64) *Flags {
-	return &Flags{
-		Games:       games,
-		Seed:        seed,
-		Check:       check,
-		AgentName:   agentName,
-		Concurrency: concurrency,
-		MaxBatch:    maxBatch,
-		Timeout:     time.Duration(timeout * float64(time.Millisecond)),
-	}
 }
 
 func main() {
@@ -84,7 +68,12 @@ func main() {
 
 	switch *mode {
 	case "soak":
-		flags := newFlags(*games, *seed, *check, *agentName, *concurrency, *maxBatch, *timeoutMs)
+		flags := &Flags{
+			Games:       *games,
+			Seed:        *seed,
+			Check:       *check,
+			Concurrency: *concurrency,
+		}
 		b := engine.BuildAgent(*agentName, *server, *maxBatch, timeout)
 		defer b.Stop()
 		runSoak(b.Agent, flags)
