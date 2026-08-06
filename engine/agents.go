@@ -58,15 +58,26 @@ func NewGreedyBundle(scorer *Scorer, maxBatch int, timeout time.Duration) AgentB
 	return AgentBundle{Agent: NewGreedyAgent(bt), Batcher: bt, Stop: bt.Stop}
 }
 
+func NewPipAgent() Agent {
+	return func(_ *Dice) (Picker, Picker) {
+		white := func(bs []Board) int { return PipPick(bs, true) }
+		black := func(bs []Board) int { return PipPick(bs, false) }
+		return white, black
+	}
+}
+
 func BuildAgent(name, server string, maxBatch int, timeout time.Duration) AgentBundle {
-	if name == "random" {
+	switch name {
+	case "random":
 		return AgentBundle{
 			Agent: NewRandomAgent(),
 			Stop:  func() {},
 		}
-	}
-	if name == "greedy" {
+	case "greedy":
 		return NewGreedyBundle(NewScorer(server), maxBatch, timeout)
+	case "pip":
+		return AgentBundle{Agent: NewPipAgent(), Stop: func() {}}
+	default:
+		panic(fmt.Sprintf("invalid agent name %q", name))
 	}
-	panic(fmt.Sprintf("invalid agent name %q", name))
 }

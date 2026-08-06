@@ -195,7 +195,7 @@ Sample ~2000 positions by playing random games and grabbing every 10th position.
 func FuzzAfterstates(f *testing.F)
 ```
 
-Fuzz inputs: uint64 seed → deterministic random position (replay a seeded random game k plies) + dice. Property: every afterstate passes `Check()`; set nonempty (forfeit counts as the one skip board). `go test -fuzz=FuzzAfterstates -fuzztime=30m` in a spare terminal; check it at lunch.
+Fuzz inputs: uint64 seed → deterministic random position (replay a seeded random game k plies) + dice. Property: every afterstate passes `Check()`; set nonempty (forfeit counts as the one skip board).  in a spare terminal; check it at lunch.
 
 ### Block 4 (3:30–5:00) — encoding
 
@@ -208,7 +208,7 @@ func Encode(b Board, out *[EncodingDim]float32)
 Layout (document as a comment, this exact order):
 
 ```
-[0:96)    white points 0-23, 4 units each: {n≥1, n≥2, n≥3, max(0,n-3)/2}
+[0:96)    white points 0-23, 4 units each: {n≥1, n≥2, n≥3
 [96:192)  black points 0-23, same
 [192]     WhiteBar / 2.0
 [193]     BlackBar / 2.0
