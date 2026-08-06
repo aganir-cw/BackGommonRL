@@ -33,10 +33,21 @@ BATCH_SIZE =  8192
 POLL_EVERY = 50  # tail the shard dir every N steps, not every step
 SYNC_EVERY = 500  # push weights to the inference server every N steps
 LOG_EVERY = 100  # append a metrics row (stdout + CSV) every N steps
+CKPT_EVERY = 20_000
 LOG_PATH = os.path.join("analysis", "results", "train_log.csv")
 
+CKPT_DIR = "checkpoints"
 SERVER_URL = "http://localhost:8000"
 
+
+def save_checkpoint(model: torch.nn.Module, games: int, ckpt_dir: str = CKPT_DIR) -> str:
+    os.makedirs(ckpt_dir, exist_ok=True)
+    cpu_sd = {k: v.cpu() for k, v in model.state_dict().items()}
+    path = os.path.join(ckpt_dir, f"ckpt_{games}.pth")
+    tmp = path + ".tmp"
+    torch.save(cpu_sd, tmp)
+    os.replace(tmp, path)
+    return path
 
 def pick_device() -> torch.device:
     """Prefer CUDA, then Apple MPS, then CPU."""
@@ -222,6 +233,7 @@ if __name__ == "__main__":
 
     step = 0
     syncs = 0
+    next_ckpt = CKPT_EVERY
 
     # Step 6: open the metrics CSV up front and flush every row so a crash keeps
     # partial data. Columns mirror the analysis/results/sweep.csv style.
@@ -250,6 +262,12 @@ if __name__ == "__main__":
         loss.backward()
         opt.step()
         step += 1
+
+        if tailer.games_seen >= next_ckpt:
+            p = save_checkpoint(model, tailer.games_seen)
+            print(f"[ckpt] saved {p}")
+            next_ckpt = (tailer.games_seen // CKPT_EVERY + 1) * CKPT_EVERY
+            print(f"next_ckpt_at: {next_ckpt}")
 
         # Step 5: push weights to the inference server (count it before logging).
         if step % SYNC_EVERY == 0:
