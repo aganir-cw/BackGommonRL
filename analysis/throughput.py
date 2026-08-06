@@ -16,7 +16,7 @@ def _():
 
 @app.cell
 def _(pd):
-    df = pd.read_csv("results/sweep.csv")
+    df = pd.read_csv("analysis/results/train_log.csv")
     df
     return (df,)
 
@@ -39,7 +39,7 @@ def _(df, mticker, plt):
         ax.xaxis.set_major_formatter(mticker.ScalarFormatter())  # 32, 128… not 2^5, 2^7
         ax.set_ylim(bottom=0)       
         ax.axvline(512, ls=":", color="#999")# honest saturation shape
-    
+
         ax.set_xlabel("concurrency (simultaneous games)")
         ax.set_ylabel("throughput (games / s)")
         ax.set_title("Self-play throughput vs concurrency", fontsize=12, fontweight="bold")
@@ -47,7 +47,7 @@ def _(df, mticker, plt):
         ax.grid(True, linestyle="--", alpha=0.5, color="#cccccc", zorder=0)
         ax.legend(title="batch flush timeout", frameon=False)
         fig.tight_layout()
-    
+
         peak = df.loc[df["games_per_s"].idxmax()]
         ax.scatter(
             peak["concurrency"], peak["games_per_s"],
@@ -83,7 +83,7 @@ def _(df, mticker, plt):
         ax.set_xticks(sorted(df["concurrency"].unique()))
         ax.xaxis.set_major_formatter(mticker.ScalarFormatter())  # 32, 128… not 2^5, 2^7
         ax.set_ylim(bottom=0)       
-    
+
         ax.set_xlabel("concurrency (simultaneous games)")
         ax.set_ylabel("throughput (games / s)")
         ax.set_title("Self-play throughput vs concurrency", fontsize=12, fontweight="bold")
