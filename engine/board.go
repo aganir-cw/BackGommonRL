@@ -2,6 +2,7 @@ package engine
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -195,7 +196,42 @@ func LegalAfterstates(b Board, d1, d2 int) []Board {
 	if len(out) == 0 {
 		return []Board{skip(b)}
 	}
+	// Go map iteration order is randomized per run, so the states slice above is
+	// in arbitrary order. Sort it into a stable total order so downstream picks
+	// (a seeded random index, or a tie-broken argmin) are reproducible run to
+	// run — this is what makes CRN eval deterministic.
+	slices.SortFunc(states, compareBoards)
 	return states
+}
+
+// compareBoards is a stable total order over boards, comparing points left to
+// right and then the bar/off/turn fields. Only used to make afterstate ordering
+// deterministic; the ordering itself carries no game meaning.
+func compareBoards(a, b Board) int {
+	for i := range a.Points {
+		if a.Points[i] != b.Points[i] {
+			return int(a.Points[i]) - int(b.Points[i])
+		}
+	}
+	if a.WhiteBar != b.WhiteBar {
+		return int(a.WhiteBar) - int(b.WhiteBar)
+	}
+	if a.BlackBar != b.BlackBar {
+		return int(a.BlackBar) - int(b.BlackBar)
+	}
+	if a.WhiteOff != b.WhiteOff {
+		return int(a.WhiteOff) - int(b.WhiteOff)
+	}
+	if a.BlackOff != b.BlackOff {
+		return int(a.BlackOff) - int(b.BlackOff)
+	}
+	if a.WhiteToMove != b.WhiteToMove {
+		if a.WhiteToMove {
+			return 1
+		}
+		return -1
+	}
+	return 0
 }
 
 func gen(b Board, dice []int, depth int, out map[Board]int) {

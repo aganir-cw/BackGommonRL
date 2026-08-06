@@ -122,17 +122,24 @@ class ShardTailer:
     record (a game still being appended). f.tell() then lands exactly after the
     last complete record, so the next poll resumes there -- no re-reading from 0
     (which would be O(n^2) and double-count) and no reading half-written games.
+
+    Fully-consumed shards are pruned to keep disk flat over a long run: at
+    ~1M games the record dir would otherwise grow to tens of GB, yet the replay
+    buffer only holds the most recent `cap` positions, so old shards are dead
+    weight. See prune() for the safety rule (never touch the newest shards).
     """
 
-    def __init__(self, record_dir: str):
+    def __init__(self, record_dir: str, keep_last: int = 8):
         self.record_dir = record_dir
         self.offsets: dict[str, int] = {}
         self.games_seen = 0
+        self.keep_last = keep_last
 
     def poll(self, buffer: ReplayBuffer) -> int:
         """Ingest all new complete records into buffer. Returns games added this poll."""
         added = 0
-        for path in sorted(glob.glob(os.path.join(self.record_dir, "*.bin"))):
+        files = sorted(glob.glob(os.path.join(self.record_dir, "*.bin")))
+        for path in files:
             with open(path, "rb") as f:
                 f.seek(self.offsets.get(path, 0))
                 for encs, won in iter_records(f):
@@ -140,7 +147,24 @@ class ShardTailer:
                     added += 1
                 self.offsets[path] = f.tell()
         self.games_seen += added
+        self.prune(files)
         return added
+
+    def prune(self, files: list[str]) -> None:
+        """Delete shards that are fully read and not among the newest keep_last.
+
+        A shard is safe to remove only once its offset has reached the file size
+        (every record consumed into the buffer). Because we drive deletion off
+        the trainer's own offsets, a shard the trainer has fallen behind on is
+        never dropped -- it simply fails the offset==size check and survives.
+        """
+        for path in files[: -self.keep_last or None]:
+            try:
+                if self.offsets.get(path, 0) >= os.path.getsize(path):
+                    os.remove(path)
+                    self.offsets.pop(path, None)
+            except FileNotFoundError:
+                self.offsets.pop(path, None)
 
 
 def unit_check(path: str, n_games: int = 10, steps: int = 2000) -> float:
@@ -207,6 +231,8 @@ if __name__ == "__main__":
     log_writer.writerow(["step", "loss", "buffer_fill", "games_seen", "syncs"])
     log_file.flush()
 
+    print(f"STARTING TRAINING ON DEVICE: {device}")
+
     while True:
         # During warm-up step stays 0, so this polls every iteration until the
         # buffer fills; after that it polls once every POLL_EVERY steps.
@@ -241,13 +267,16 @@ if __name__ == "__main__":
 
         # Step 6: log every LOG_EVERY steps to stdout and the CSV.
         if step % LOG_EVERY == 0:
+            if step % 10000 == 0:
+                print(
+                    f"step={step:6d}  loss={loss_val:.4f}  "
+                    f"buffer_fill={buffer.filled}  games_seen={tailer.games_seen}  "
+                    f"syncs={syncs}"
+                )
             loss_val = loss.item()
-            print(
-                f"step={step:6d}  loss={loss_val:.4f}  "
-                f"buffer_fill={buffer.filled}  games_seen={tailer.games_seen}  "
-                f"syncs={syncs}"
-            )
             log_writer.writerow(
                 [step, f"{loss_val:.6f}", buffer.filled, tailer.games_seen, syncs]
             )
             log_file.flush()
+
+        

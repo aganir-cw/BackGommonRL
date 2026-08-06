@@ -11,19 +11,16 @@ def _():
     import matplotlib.pyplot as plt
     import matplotlib.ticker as mticker
 
+    import numpy as np
+
     return pd, plt
 
 
 @app.cell
-def _(pd):
-    df = pd.read_csv("analysis/results/train_log.csv")
-    df
-    return (df,)
-
-
-@app.cell
-def _(df, plt):
+def _(pd, plt):
     def plot_loss():
+        df = pd.read_csv("analysis/results/train_log.csv")
+        df
         fig, ax = plt.subplots(figsize=(8, 6), dpi=512)
         steps = df["step"]
         loss = df["loss"]
@@ -35,8 +32,22 @@ def _(df, plt):
 
 
 @app.cell
-def _(l):
-    l
+def _(pd, plt):
+    df = pd.read_csv("analysis/results/eval_log.csv")
+    fig, ax = plt.subplots(figsize=(8, 6))
+    for opp, g in df.groupby("opponent"):
+        ax.errorbar(g["games_seen"], g["winrate"], yerr=g["ci"],
+                    marker="o", capsize=3, label=f"vs {opp}")
+    ax.axhline(0.5, ls="--", c="gray"); ax.axhline(0.95, ls=":", c="green")
+    ax.set_xlabel("games trained on"); ax.set_ylabel("winrate (greedy = A)")
+    ax.legend();
+
+    fig
+    return
+
+
+@app.cell
+def _():
     return
 
 
