@@ -40,9 +40,9 @@ CKPT_DIR = "checkpoints"
 SERVER_URL = "http://localhost:8000"
 
 
-def save_checkpoint(model: torch.nn.Module, games: int, ckpt_dir: str = CKPT_DIR) -> str:
+def save_checkpoint(state_dict: dict, games: int, ckpt_dir: str = CKPT_DIR) -> str:
     os.makedirs(ckpt_dir, exist_ok=True)
-    cpu_sd = {k: v.cpu() for k, v in model.state_dict().items()}
+    cpu_sd = {k: v.cpu() for k, v in state_dict.items()}
     path = os.path.join(ckpt_dir, f"ckpt_{games}.pth")
     tmp = path + ".tmp"
     torch.save(cpu_sd, tmp)
@@ -199,7 +199,7 @@ def unit_check(path: str, n_games: int = 10, steps: int = 2000) -> float:
     yt = torch.from_numpy(y).to(device)
 
     model = ValueNet().to(device)
-    opt = torch.optim.Adam(model.parameters(), lr=1e-3)
+    opt = torch.optim.Adam(model.parameters(), lr = 3e-4)
 
     loss = torch.tensor(float("inf"))
     for step in range(steps):
@@ -226,8 +226,17 @@ if __name__ == "__main__":
     device = pick_device()
 
     tailer = ShardTailer(record_dir="records")
-    buffer = ReplayBuffer()
+    buffer = ReplayBuffer(cap=1_000_000)
     model = ValueNet().to(device)
+
+    # Exponential moving average of the weights. The trainer keeps stepping the
+    # fast `model`, but what we SERVE (and checkpoint) is this slow average.
+    # Reason: self-play runs against whatever is on the server, so feeding it the
+    # trainer's latest twitch creates a tight feedback loop where the net chases
+    # its own noise and the state distribution collapses. A lagged average is a
+    # stabler behavior policy -- updated every step below, synced/saved as-is.
+    ema = {k: v.detach().clone() for k, v in model.state_dict().items()}
+    EMA_DECAY = 0.999
 
     opt = torch.optim.Adam(model.parameters(), lr=1e-3)
 
@@ -263,15 +272,24 @@ if __name__ == "__main__":
         opt.step()
         step += 1
 
+        # Track the served/checkpointed policy as a slow average of the weights.
+        with torch.no_grad():
+            for k, v in model.state_dict().items():
+                if ema[k].is_floating_point():
+                    ema[k].mul_(EMA_DECAY).add_(v, alpha=1 - EMA_DECAY)
+                else:
+                    ema[k].copy_(v)
+
         if tailer.games_seen >= next_ckpt:
-            p = save_checkpoint(model, tailer.games_seen)
+            p = save_checkpoint(ema, tailer.games_seen)
             print(f"[ckpt] saved {p}")
             next_ckpt = (tailer.games_seen // CKPT_EVERY + 1) * CKPT_EVERY
             print(f"next_ckpt_at: {next_ckpt}")
 
         # Step 5: push weights to the inference server (count it before logging).
+        # Serve the EMA, not the live model -- see the EMA comment above.
         if step % SYNC_EVERY == 0:
-            cpu_sd = {k: v.cpu() for k, v in model.state_dict().items()}
+            cpu_sd = {k: v.cpu() for k, v in ema.items()}
             buf = io.BytesIO()
             torch.save(cpu_sd, buf)
             req = urllib.request.Request(
@@ -285,13 +303,13 @@ if __name__ == "__main__":
 
         # Step 6: log every LOG_EVERY steps to stdout and the CSV.
         if step % LOG_EVERY == 0:
+            loss_val = loss.item()
             if step % 10000 == 0:
                 print(
                     f"step={step:6d}  loss={loss_val:.4f}  "
                     f"buffer_fill={buffer.filled}  games_seen={tailer.games_seen}  "
                     f"syncs={syncs}"
                 )
-            loss_val = loss.item()
             log_writer.writerow(
                 [step, f"{loss_val:.6f}", buffer.filled, tailer.games_seen, syncs]
             )

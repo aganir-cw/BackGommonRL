@@ -49,6 +49,7 @@ func main() {
 	timeoutMs := flag.Float64("timeout-ms", 2.0, "batch flush timeout in milliseconds")
 	mode := flag.String("mode", "soak", "soak or sweep")
 	server := flag.String("server", "http://localhost:8000", "server URL for greedy mode")
+	epsilon := flag.Float64("epsilon", 0.05, "greedy self-play exploration rate (fraction of random legal moves)")
 	out := flag.String("out", "sweep.csv", "output CSV path for sweep mode")
 	warmup := flag.Duration("warmup", 10*time.Second, "warmup window per sweep cell")
 	measure := flag.Duration("measure", 60*time.Second, "measure window per sweep cell")
@@ -75,7 +76,7 @@ func main() {
 			Check:       *check,
 			Concurrency: *concurrency,
 		}
-		b := engine.BuildAgent(*agentName, *server, *maxBatch, timeout)
+		b := engine.BuildAgent(*agentName, *server, *maxBatch, timeout, *epsilon)
 		defer b.Stop()
 		var rec *engine.Recorder
 		if *record != "" {

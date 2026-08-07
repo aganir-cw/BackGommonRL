@@ -36,8 +36,8 @@ func main() {
 
 	timeout := time.Duration(*timeoutMs * float64(time.Millisecond))
 
-	bundleA := engine.BuildAgent(*a, *serverAddress, *maxBatch, timeout)
-	bundleB := engine.BuildAgent(*b, *serverAddress, *maxBatch, timeout)
+	bundleA := engine.BuildAgent(*a, *serverAddress, *maxBatch, timeout, 0)
+	bundleB := engine.BuildAgent(*b, *serverAddress, *maxBatch, timeout, 0)
 
 	defer bundleA.Stop()
 	defer bundleB.Stop()

@@ -92,7 +92,7 @@ func RunSweep(server string, maxBatch, baseSeed int, warmup, measure time.Durati
 	for _, timeout := range timeouts {
 		for _, concurrency := range concurrencies {
 			makeBundle := func() engine.AgentBundle {
-				return engine.NewGreedyBundle(scorer, maxBatch, timeout)
+				return engine.NewGreedyBundle(scorer, maxBatch, timeout, 0)
 			}
 
 			res, cGames, cPlies := RunCell(makeBundle, concurrency, timeout, warmup, measure, baseSeed)

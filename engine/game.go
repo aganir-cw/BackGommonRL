@@ -21,6 +21,13 @@ func (d *Dice) Pick(n int) int {
 	return d.rng.IntN(n)
 }
 
+// Float64 returns a uniform [0,1) draw from the game's RNG. Used for epsilon
+// exploration in self-play. Eval runs with epsilon=0 so it never draws here,
+// keeping the dice stream (and thus CRN determinism) untouched.
+func (d *Dice) Float64() float64 {
+	return d.rng.Float64()
+}
+
 // GameResult summarizes a single completed (or capped) game.
 type GameResult struct {
 	WhiteWon bool // true if White borne off all 15 first
